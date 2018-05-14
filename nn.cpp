@@ -61,9 +61,14 @@ RowVectorXf NeuralNet::forward(RowVectorXf X){
 }
 
 
-void NeuralNet::forward_keep_activations(RowVectorXf X, RowVectorXf &y, RowVectorXf &z, RowVectorXf &zH){
-	RowVectorXf h;
+void NeuralNet::forward_keep_activations(RowVectorXf X, RowVectorXf &y, RowVectorXf &h, RowVectorXf &zH){
+	zH = X * this -> wH + this -> bH;
+	h = sigmoid(zH);
+	RowVector zO = h * this -> wO + this -> bO;
+	y = softmax(zO);
 }
+
+
 
 int main()
 {
