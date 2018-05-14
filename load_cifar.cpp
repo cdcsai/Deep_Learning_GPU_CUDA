@@ -1,10 +1,23 @@
 
 #include <iostream>
+#include <stdio.h>
 #include "cifar-10-master/include/cifar/cifar10_reader.hpp"   //Library that do the loading of the file
 #include <Eigen/Dense> //The Eigen library for linear algebra
 #include "load_cifar.h" //The header file
 
 using namespace Eigen;
+
+template <typename T>
+std::vector<T> flatten(const std::vector<std::vector<T>>& v) {
+    std::size_t total_size = 0;
+    for (const auto& sub : v)
+        total_size += sub.size(); // I wish there was a transform_accumulate
+    std::vector<T> result;
+    result.reserve(total_size);
+    for (const auto& sub : v)
+        result.insert(result.end(), sub.begin(), sub.end());
+    return result;
+}
 
 void loadToStdVectors(){
 		//We load the dataset and store it in the object dataset
@@ -28,26 +41,39 @@ void loadToStdVectors(){
 		}
 }
 
-void loadToEigenMatrices(){
+processedData loadToEigenMatrices(){
 		//We load the dataset and store it in the object dataset
-		auto dataset = cifar::read_dataset<VectorXi, VectorXi, int, int>();
+		auto dataset = cifar::read_dataset<std::vector, std::vector, int, int>();
+		//We flatten the training image container and we transform it to an Eigen vector
+		std::vector<int> trainingImages = flatten(dataset.training_images);
+		VectorXi trainingImagesEig = Map<VectorXi, Unaligned>(trainingImages.data(), trainingImages.size());
+		//We flatten the test image container and we transform it to an Eigen vector
+		std::vector<int> testImages = flatten(dataset.test_images);
+		VectorXi testImagesEig = Map<VectorXi, Unaligned>(testImages.data(), testImages.size());
+		//We transform the training labels container to an Eigen vector
+		std::vector<int> trainingLabels = dataset.training_labels;
+		VectorXi trainingLabelsEig = Map<VectorXi, Unaligned>(trainingLabels.data(), trainingLabels.size());
+		//We transform the test labels container to an Eigen vector
+		std::vector<int> testLabels = dataset.test_labels;
+		VectorXi testLabelsEig = Map<VectorXi, Unaligned>(testLabels.data(), testLabels.size());
+		
+		processedData data;
+		data.trainingImages = trainingImagesEig;
+		data.trainingLabels = trainingLabelsEig;
+		data.testImages = testImagesEig;
+		data.testLabels = testLabelsEig;
 		/*
-		std::vector<uint8_t> trainingLabels = dataset.training_labels;
-		vectorXd trainingLabelsEig(trainingLabels.size());
-		
-		std::vector<uint8_t> testLabels = dataset.test_labels;
-		vectorXd testLabelsEig(testLabels.size());
-		
-		for(int i = 0; i < testLabels.size(); i++){
-		  testLabelsEig(i) = testLabels[i];
-		}
+		std::cout << "Nb training images: " << trainingImagesEig.size() << std::endl;
+		std::cout << "Nb training labels: " << trainingLabels.size() << std::endl;
+		std::cout << "Nb test images: " << testImagesEig.size() << std::endl;
+		std::cout << "Nb test labels: " << testLabelsEig.size() << std::endl;
 		*/
-		
+		return(data);
 }
 
 
 int main()
 {
-  loadToStdVectors();
+  processedData data = loadToEigenMatrices();
   return 0;
 }
