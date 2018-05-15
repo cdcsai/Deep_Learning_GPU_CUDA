@@ -6,17 +6,18 @@
 using namespace Eigen;
 
 
-RowVectorXf sigmoid(RowVectorXf X);
-RowVectorXf dsigmoid(RowVectorXf X);
-RowVectorXf softmax(RowVectorXf X);
+MatrixXf sigmoid(MatrixXf X);
+MatrixXf dsigmoid(MatrixXf X);
+MatrixXf softmax(MatrixXf X);
 float nll(RowVectorXf yTrue, RowVectorXf yPred);
 
 class NeuralNet{
 //Méthodes
 public:
 	NeuralNet(int inputSize, int hiddenSize, int outputSize);
-	RowVectorXf forward(RowVectorXf x);
-	void NeuralNet::forward_keep_activations(RowVectorXf X, RowVectorXf &y, RowVectorXf &z, RowVectorXf &zH);
+	MatrixXf forward(MatrixXf X);
+	void forward_keep_activations(MatrixXf X, MatrixXf &y, MatrixXf &h, MatrixXf &zH);
+	float loss(MatrixXf X, VectorXf y);
 	~NeuralNet();
 
 //Attributs	
@@ -24,7 +25,7 @@ public:
 	MatrixXf wH;
 	RowVectorXf bH;
 	MatrixXf wO;
-	RowVectorXf bO;
+	float bO;
 	int outputSize;	
 };
 

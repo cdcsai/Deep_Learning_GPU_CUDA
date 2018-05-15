@@ -7,24 +7,24 @@ using namespace std;
 
 
 //This defines the sigmoid function
-RowVectorXf sigmoid(RowVectorXf X){
-	ArrayXf expo = (-X.transpose()).array().exp();
-	ArrayXf result = 1 / (1 + expo);
-	return(result.matrix().transpose());
+MatrixXf sigmoid(MatrixXf X){
+	ArrayXXf expo = (-X).array().exp();
+	ArrayXXf result = 1 / (1 + expo);
+	return(result.matrix());
 }
 
 //This defines the dsigmoid function
-RowVectorXf dsigmoid(RowVectorXf X){
-	ArrayXf sig = sigmoid(X).transpose().array();
-	ArrayXf result = sig * (1 - sig);
-	return(result.matrix().transpose());
+MatrixXf dsigmoid(MatrixXf X){
+	ArrayXXf sig = sigmoid(X).array();
+	ArrayXXf result = sig * (1 - sig);
+	return(result.matrix());
 }
 
 //This function defines the softmax function
-RowVectorXf softmax(RowVectorXf X){
-	ArrayXf e = X.transpose().array().exp();
+MatrixXf softmax(MatrixXf X){
+	ArrayXXf e = X.array().exp();
 	ArrayXf result = e / e.sum();
-	return (result.matrix().transpose());
+	return (result.matrix());
 }
 
 //This defines the negative likelihood
@@ -41,7 +41,7 @@ float nll(RowVectorXf yTrue, RowVectorXf yPred){
 //Constructor of NeuralNet class
 NeuralNet::NeuralNet(int inputSize, int hiddenSize, int outputSize):
 wH(MatrixXf::Random(inputSize, hiddenSize) * 0.01), bH(ArrayXf::Zero(hiddenSize).matrix().transpose()), 
-wO(MatrixXf::Random(hiddenSize, outputSize) * 0.01), bO(ArrayXf::Zero(outputSize).matrix().transpose()), outputSize(outputSize)
+wO(MatrixXf::Random(hiddenSize, outputSize) * 0.01), bO(0), outputSize(outputSize)
 {
 	
 }
@@ -52,43 +52,66 @@ NeuralNet::~NeuralNet(){
 }
 
 
-RowVectorXf NeuralNet::forward(RowVectorXf X){
-	RowVectorXf h;
-	RowVectorXf y;
-	h = sigmoid(X * this -> wH + this -> bH);
-	y = softmax(h * this -> wO + this -> bO);
+MatrixXf NeuralNet::forward(MatrixXf X){
+	MatrixXf h;
+	MatrixXf y;
+	h = sigmoid((X * this -> wH).rowwise() + (this -> bH));
+	y = softmax(((h * this -> wO).array() + this -> bO).matrix());
 	return(y);
 }
 
 
-void NeuralNet::forward_keep_activations(RowVectorXf X, RowVectorXf &y, RowVectorXf &h, RowVectorXf &zH){
-	zH = X * this -> wH + this -> bH;
+void NeuralNet::forward_keep_activations(MatrixXf X, MatrixXf &y, MatrixXf &h, MatrixXf &zH){
+	zH = (X * this -> wH).rowwise() + this -> bH;
 	h = sigmoid(zH);
-	RowVector zO = h * this -> wO + this -> bO;
+	MatrixXf zO = ((h * this -> wO).array() + this -> bO).matrix();
 	y = softmax(zO);
 }
 
 
+float NeuralNet::loss(MatrixXf X, VectorXf y){
+		return(nll(y.transpose(), (this -> forward)(X).transpose()));
+}
 
 int main()
 {
+  /*
   RowVectorXf yTrue(7), yPred(7);
   RowVectorXf x(7), res(7);
   float result;
   yTrue << 1, 0, 0, 0, 1, 1, 1;
   yPred << 0, 1, 0, 0, 1, 1, 1;
   x << 1, 2, 4, 2, 3, 0, 5;
-  NeuralNet nn(7, 5, 2);
-  cout << "****wH************" << endl;
+  */
+  NeuralNet nn(4, 3, 1);
+  MatrixXf X(6, 4);
+  VectorXf y(6);
+  y << 0, 
+          1, 
+		  1, 
+		  1,
+		  0,
+		  0;
+  MatrixXf res, h, zH;
+  X << 10, 0, 3, 4,
+       20, 25, 3, 5,
+	   2, 3, 0, 5,
+	   2, 3, 12, 5,
+	   2, 3, 12, 5,
+	   0, 0, 0, 1;
+  float result;
+  /*
+  cout << "wH" << endl;
   cout << nn.wH << endl;
-  cout << "****wO************" << endl;
-  cout << nn.wO << endl;
-  cout << "****bH************" << endl;
+  cout << "bH" << endl;
   cout << nn.bH << endl;
-  cout << "****bO************" << endl;
+  cout << "wO" << endl;
+  cout << nn.wO << endl;
+  cout << "bO" << endl;
   cout << nn.bO << endl;
-  res = nn.forward(x);
-  cout << "****forward************" << endl;
-  cout << res << endl;
+  */
+  result = nn.loss(X, y);
+  cout << "****loss************" << endl;
+  cout << result << endl;
   return 0;
 }

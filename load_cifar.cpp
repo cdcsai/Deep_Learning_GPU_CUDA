@@ -62,12 +62,12 @@ processedData loadToEigenMatrices(){
 		data.trainingLabels = trainingLabelsEig;
 		data.testImages = testImagesEig;
 		data.testLabels = testLabelsEig;
-		/*
+		
 		std::cout << "Nb training images: " << trainingImagesEig.size() << std::endl;
 		std::cout << "Nb training labels: " << trainingLabels.size() << std::endl;
 		std::cout << "Nb test images: " << testImagesEig.size() << std::endl;
 		std::cout << "Nb test labels: " << testLabelsEig.size() << std::endl;
-		*/
+		
 		return(data);
 }
 
