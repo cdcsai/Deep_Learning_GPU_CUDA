@@ -44,9 +44,14 @@ void loadToStdVectors(){
 processedData loadToEigenMatrices(){
 		//We load the dataset and store it in the object dataset
 		auto dataset = cifar::read_dataset<std::vector, std::vector, int, int>();
-		//We flatten the training image container and we transform it to an Eigen vector
+		//We flatten the training image container and we transform it to an Eigen matrix
+		int nbTrainingImages = dataset.training_images.size();
+		int sizeOfImage = dataset.training_images[0].size();
 		std::vector<int> trainingImages = flatten(dataset.training_images);
 		VectorXi trainingImagesEig = Map<VectorXi, Unaligned>(trainingImages.data(), trainingImages.size());
+		MatrixXi trainingImagesMat = trainingImagesEig;
+		trainingImagesMat.resize(sizeOfImage, nbTrainingImages);
+		std::cout << trainingImagesMat.rows() << " " << trainingImagesMat.cols() << std::endl;
 		//We flatten the test image container and we transform it to an Eigen vector
 		std::vector<int> testImages = flatten(dataset.test_images);
 		VectorXi testImagesEig = Map<VectorXi, Unaligned>(testImages.data(), testImages.size());
@@ -63,6 +68,8 @@ processedData loadToEigenMatrices(){
 		data.testImages = testImagesEig;
 		data.testLabels = testLabelsEig;
 		
+		std::cout << trainingImagesMat(1, 0) << std::endl;
+		std::cout << trainingImagesEig(50000) << std::endl;
 		std::cout << "Nb training images: " << trainingImagesEig.size() << std::endl;
 		std::cout << "Nb training labels: " << trainingLabels.size() << std::endl;
 		std::cout << "Nb test images: " << testImagesEig.size() << std::endl;
