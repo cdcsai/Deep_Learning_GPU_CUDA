@@ -1,11 +1,13 @@
 #include <iostream>
-#include <Eigen/Dense>
+#include </usr/users/hpcgif/hpcgif_9/Deep_Learning_GPU_CUDA/Eigen/Dense>
 #include <vector>
 #include <math.h>
 #include <random>
 
 using namespace Eigen;
 using namespace std;
+
+
 
 //This defines the sigmoid function
 MatrixXf sigmoid(MatrixXf X){
@@ -35,17 +37,40 @@ MatrixXf softmax(MatrixXf X){
 
 //This function initializes the coefficient
 void initialize(VectorXf &w, float &b, int dim){
-	w = ArrayXf::Zero(dim).matrix();
+	w = ArrayXf::Random(dim).matrix();
 	b = 0;
 }
 
+// CUDA functions used for training the NN
+__global__ void dot_par(int*ret, RowVectorXf *w, VectorXf *X){
+  float temp[26];
+  temp[threadIdx.x] = w[threadIdx.x] * X[threadIdx.x];
+  __syncthreads();
+  if (0 == threadIdx.x){
+    int sum = 0;
+    for (int i=0; i<26; i++){
+      sum += temp[i];
+    ret* = sum;
+    }
+  }}
+
+// Prop and back prop parallelised using the dot product
 void propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost){
 	int m = X.cols();
-	MatrixXf A = sigmoid((w.transpose() * X).array() + b);
+  int d = X.rows();
+
+  int *ret;
+  cudaMallocManaged(&ret, d * sizeof(float));
+  MatrixXf A = sigmoid((dot_par<<< 1, 1 >>>(ret, w.transpose(), X.rows(3)) + b));
+      cudaDeviceSynchronize();
+  cudaFree(ret);
 	cost = (-1. / m) * (((y.array() * A.array().log()) + ((1 - y.array()) * (1 - A.array()).log())).sum());
 	dw = (1. / m) * (X * ((A - y).transpose()));
-	db = (1. / m) * ((A - y).sum());
-}
+	db = (1. / m) * ((A - y).sum());}
+
+//__device__ __managed__  int  ret[1000];
+//__global__ void AplusB(int a, int b) {
+  //  ret[threadIdx.x] = a + b + threadIdx.x;
 
 void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
 	float a_i = sigmoid_i(w.dot(X_i) + b);
@@ -62,15 +87,15 @@ void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVec
     mt19937 gen(rd());
     uniform_int_distribution<int> dis(0, m - 1);
     int i = dis(gen);
-		float cost_i;
-		propagate_i(w, b, X.col(i), y(i), dw, db, cost_i);
+		float cost;
+		propagate(w, b, X, y, dw, db, cost);
 		w = w - ((learningRate / sqrt(j + 1)) * dw);
 		b = b - ((learningRate / sqrt(j + 1)) * db);
 		if (i % 100 == 0){
-			costs.push_back(cost_i);
+			costs.push_back(cost);
 		}
 		if(printCost and (j % 10) == 0)
-            cout << "Cost after iteration " << j << ": " << cost_i << endl;
+            cout << "Cost after iteration " << j << ": " << cost << endl;
 	}
 }
 
@@ -123,10 +148,10 @@ int main(){
 	RowVectorXf yPredictions, yPredictionsTest;
 	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
 	//vector<float> costs;
-	float cost;
 	propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost);
+
 	//propagate_i(w, b, x.col(3), y(3), dw, db, cost_i);
-	//model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 1000000, 0.00002);
+	//model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0002);
 
 	return(0);
 }
