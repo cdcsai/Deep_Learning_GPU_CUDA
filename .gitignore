@@ -1,2 +1,3 @@
 *.bin
-*.ipynb
+.ipynb
+.ipynb_checkpoints
