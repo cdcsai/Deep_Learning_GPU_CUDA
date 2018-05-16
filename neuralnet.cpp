@@ -1,17 +1,22 @@
 #include <iostream>
 #include <Eigen/Dense>
 #include <vector>
-#include "nn.h"
+#include <math.h>
+#include <random>
 
 using namespace Eigen;
 using namespace std;
-
 
 //This defines the sigmoid function
 MatrixXf sigmoid(MatrixXf X){
 	ArrayXXf expo = (-X).array().exp();
 	ArrayXXf result = 1 / (1 + expo);
 	return(result.matrix());
+}
+
+float sigmoid_i(float X){
+	float result = 1 / (1 + exp(-X));
+	return(result);
 }
 
 //This defines the dsigmoid function
@@ -36,31 +41,43 @@ void initialize(VectorXf &w, float &b, int dim){
 
 void propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost){
 	int m = X.cols();
-	MatrixXf A = sigmoid((w.transpose() * X).array() + b); 
+	MatrixXf A = sigmoid((w.transpose() * X).array() + b);
 	cost = (-1. / m) * (((y.array() * A.array().log()) + ((1 - y.array()) * (1 - A.array()).log())).sum());
 	dw = (1. / m) * (X * ((A - y).transpose()));
 	db = (1. / m) * ((A - y).sum());
 }
 
-void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y, 
-			  int numIterations, float learningRate, std::vector<float> &costs, bool printCost = true){
-	for(int i = 0; i < numIterations; i++){
-		float cost;
-		propagate(w, b, X, y, dw, db, cost);
-		w = w - (learningRate * dw);
-		b = b - (learningRate * db);
-		if (i % 10 == 0){
-			costs.push_back(cost);
+void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
+	float a_i = sigmoid_i(w.dot(X_i) + b);
+	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
+	dw = (X_i * (a_i - y_i));
+	db = a_i - y_i;
+}
+
+void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
+			  int numIterations, float learningRate, vector<float> &costs, bool printCost = true){
+	int m = X.cols();
+	for(int j = 0; j < numIterations; j++){
+		random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<int> dis(0, m - 1);
+    int i = dis(gen);
+		float cost_i;
+		propagate_i(w, b, X.col(i), y(i), dw, db, cost_i);
+		w = w - ((learningRate / sqrt(j + 1)) * dw);
+		b = b - ((learningRate / sqrt(j + 1)) * db);
+		if (i % 100 == 0){
+			costs.push_back(cost_i);
 		}
-		if(printCost and (i % 10) == 0)
-            cout << "Cost after iteration " << i << ": " << cost << endl;
-	}	
+		if(printCost and (j % 10) == 0)
+            cout << "Cost after iteration " << j << ": " << cost_i << endl;
+	}
 }
 
 RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 	int m = X.cols();
 	RowVectorXf yPrediction(m);
-	
+
 	MatrixXf A = sigmoid((w.transpose() * X).array() + b);
 	for(int i = 0; i < A.cols(); i++){
 		if(A(0, i) <= 0.5){
@@ -70,11 +87,11 @@ RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 			yPrediction(0, i) = 1;
 		}
 	}
-	return(yPrediction);	
+	return(yPrediction);
 }
 
-void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain, 
-           RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate, 
+void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
+           RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
 		   bool printCost = true){
 	initialize(w, b, xTrain.rows());
 	VectorXf dw;
@@ -82,9 +99,9 @@ void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTes
 	optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs);
 	yPredictionsTrain = predict(w, b, xTrain);
 	yPredictionsTest = predict(w, b, xTest);
-	
+
 	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) << endl;
-	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) << endl;		   
+	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) << endl;
 }
 
 int main(){
@@ -92,7 +109,7 @@ int main(){
 	float b, db, cost;
 	initialize(w, b, 4);
 	MatrixXf x(4, 26);
-	x << 1, 0, 3, 4, 1, 2, 2, 3, 4, 2, 3, 5, 1, 2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3, 
+	x << 1, 0, 3, 4, 1, 2, 2, 3, 4, 2, 3, 5, 1, 2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3,
        2, 5, 3, 5, 2, 1, 4, 3, 2, 0, 0, 2, 4, 0, 5, 3, 2, 4, 2, 1, 1, 2, 2, 1, 2, 5,
 	   2, 3, 0, 5, 3, 2, 4, 2, 1, 1, 2, 2, 1, 2, 5, 3, 5, 2, 1, 4, 3, 2, 0, 0, 2, 4,
 	   2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3, 2, 3, 0, 5, 3, 2, 4, 2, 1, 1, 2, 2, 1;
@@ -105,7 +122,9 @@ int main(){
 	yTest << 1, 1, 1, 0, 0;
 	RowVectorXf yPredictions, yPredictionsTest;
 	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
-	std::vector<float> costs;
-	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 500, 0.01);
-	return(0);	
+	vector<float> costs;
+	//propagate_i(w, b, x.col(3), y(3), dw, db, cost_i);
+	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 1000000, 0.00002);
+
+	return(0);
 }
