@@ -1,8 +1,16 @@
 #include <iostream>
-#include <Eigen/Dense>
+#include "Eigen/Dense"
 #include <vector>
 #include <math.h>
 #include <random>
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include "device_atomic_functions.h"
+#include "timer.h"
+#include <stdio.h>
+#include <stdlib.h>
+#define N 512
+#define THREADS_PER_BLOCK 512
 
 using namespace Eigen;
 using namespace std;
@@ -35,7 +43,7 @@ MatrixXf softmax(MatrixXf X){
 
 //This function initializes the coefficient
 void initialize(VectorXf &w, float &b, int dim){
-	w = ArrayXf::Zero(dim).matrix();
+	w = ArrayXf::Random(dim).matrix();
 	b = 0;
 }
 
@@ -53,6 +61,66 @@ void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, flo
 	dw = (X_i * (a_i - y_i));
 	db = a_i - y_i;
 }
+
+// __global__ void dot_par(float *aa, float *bb, float *cc)
+// {
+//     __shared__ float temp[THREADS_PER_BLOCK];
+//     int index = threadIdx.x + blockIdx.x * blockDim.x;
+//     temp[threadIdx.x] = aa[index] * bb[index];
+//
+//     __syncthreads();
+//
+//     if (0 == threadIdx.x)
+//     {
+//         float sum = 0;
+//         for (int i = 0; i < THREADS_PER_BLOCK; i++)
+//         {
+//             sum += temp[i];
+//         }
+//         atomicAdd(cc, sum);
+//     }
+// }
+//
+// void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
+//
+//   float *a, *b1, *c;
+//   float *dev_a, *dev_b, *dev_c(0);
+//   float size = N * sizeof(float);
+//
+//  //allocate space for the variables on the device
+//   cudaMalloc(&dev_a, size);
+//   cudaMalloc(&dev_b, size);
+//   cudaMalloc(&dev_c, sizeof(float));
+//
+//  //allocate space for the variables on the host
+//  a = (float *)malloc(size);
+//  b1 = (float *)malloc(size);
+//  c = (float *)malloc(sizeof(float));
+//
+//  dev_a = w.transpose().data();
+//  dev_b = X_i.data();
+//
+//  cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
+//  cudaMemcpy(dev_b, b1, size, cudaMemcpyHostToDevice);
+//  cudaMemcpy(dev_c, c, sizeof(float), cudaMemcpyHostToDevice);
+//
+//  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c);
+//
+//  cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
+//
+//  float a_i = sigmoid_i(*c + b);
+//
+//  free(a);
+//  free(b1);
+//  free(c);
+//  cudaFree(dev_a);
+//  cudaFree(dev_b);
+//  cudaFree(dev_c);
+//
+// 	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
+// 	dw = (X_i * (a_i - y_i));
+// 	db = a_i - y_i;
+// }
 
 void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
 			  int numIterations, float learningRate, vector<float> &costs, bool printCost = true){
@@ -100,13 +168,14 @@ void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTes
 	yPredictionsTrain = predict(w, b, xTrain);
 	yPredictionsTest = predict(w, b, xTest);
 
-	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) << endl;
-	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) << endl;
+	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
+	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
 }
 
 int main(){
+  Timer Tim;
 	VectorXf w, dw;
-	float b, db, cost;
+	float b;
 	initialize(w, b, 4);
 	MatrixXf x(4, 26);
 	x << 1, 0, 3, 4, 1, 2, 2, 3, 4, 2, 3, 5, 1, 2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3,
@@ -122,11 +191,12 @@ int main(){
 	yTest << 1, 1, 1, 0, 0;
 	RowVectorXf yPredictions, yPredictionsTest;
 	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
-	//vector<float> costs;
-	float cost;
-	propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost);
+	vector<float> costs;
 	//propagate_i(w, b, x.col(3), y(3), dw, db, cost_i);
-	//model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 1000000, 0.00002);
+  Tim.start();
+	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001);
+  Tim.add();
+	cout << "Time is: " << Tim.getsum() << " seconds" << endl;
 
 	return(0);
 }

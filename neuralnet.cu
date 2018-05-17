@@ -3,11 +3,37 @@
 #include <vector>
 #include <math.h>
 #include <random>
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include "device_atomic_functions.h"
+#include "timer.h"
+#include <stdio.h>
+#include <stdlib.h>
+#define N 512
+#define THREADS_PER_BLOCK 512
 
 using namespace Eigen;
 using namespace std;
 
+// The Cuda parallelized dot product
+__global__ void dot_par(float *aa, float *bb, float *cc)
+{
+    __shared__ float temp[THREADS_PER_BLOCK];
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    temp[threadIdx.x] = aa[index] * bb[index];
 
+    __syncthreads();
+
+    if (0 == threadIdx.x)
+    {
+        float sum = 0;
+        for (int i = 0; i < THREADS_PER_BLOCK; i++)
+        {
+            sum += temp[i];
+        }
+        atomicAdd(cc, sum);
+    }
+}
 
 //This defines the sigmoid function
 MatrixXf sigmoid(MatrixXf X){
@@ -41,39 +67,105 @@ void initialize(VectorXf &w, float &b, int dim){
 	b = 0;
 }
 
-// CUDA functions used for training the NN
-__global__ void dot_par(int*ret, RowVectorXf *w, VectorXf *X){
-  float temp[26];
-  temp[threadIdx.x] = w[threadIdx.x] * X[threadIdx.x];
-  __syncthreads();
-  if (0 == threadIdx.x){
-    int sum = 0;
-    for (int i=0; i<26; i++){
-      sum += temp[i];
-    ret* = sum;
-    }
-  }}
-
-// Prop and back prop parallelised using the dot product
 void propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost){
 	int m = X.cols();
-  int d = X.rows();
-
-  int *ret;
-  cudaMallocManaged(&ret, d * sizeof(float));
-  MatrixXf A = sigmoid((dot_par<<< 1, 1 >>>(ret, w.transpose(), X.rows(3)) + b));
-      cudaDeviceSynchronize();
-  cudaFree(ret);
+	MatrixXf A = sigmoid((w.transpose() * X).array() + b);
 	cost = (-1. / m) * (((y.array() * A.array().log()) + ((1 - y.array()) * (1 - A.array()).log())).sum());
 	dw = (1. / m) * (X * ((A - y).transpose()));
-	db = (1. / m) * ((A - y).sum());}
+	db = (1. / m) * ((A - y).sum());
+}
 
-//__device__ __managed__  int  ret[1000];
-//__global__ void AplusB(int a, int b) {
-  //  ret[threadIdx.x] = a + b + threadIdx.x;
+void propagate_par(VectorXf w, float b, VectorXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost_i){
+  int m = X.cols();
+
+ for (int i=0; i<m, i++){
+   float *a, *b1, *c;
+   float *dev_a, *dev_b, *dev_c(0);
+   float size = N * sizeof(float);
+
+  //allocate space for the variables on the device
+   cudaMalloc(&dev_a, size);
+   cudaMalloc(&dev_b, size);
+   cudaMalloc(&dev_c, sizeof(float));
+
+  //allocate space for the variables on the host
+  a = (float *)malloc(size);
+  b1 = (float *)malloc(size);
+  c = (float *)malloc(sizeof(float));
+
+  dev_a = w.transpose().data();
+  dev_b = X.col(i).data();
+
+  cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
+  cudaMemcpy(dev_b, b1, size, cudaMemcpyHostToDevice);
+  cudaMemcpy(dev_c, c, sizeof(float), cudaMemcpyHostToDevice);
+
+  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c);
+
+  cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
+
+  float a_i = sigmoid_i(*c + b);
+
+  free(a);
+  free(b1);
+  free(c);
+  cudaFree(dev_a);
+  cudaFree(dev_b);
+  cudaFree(dev_c);
+
+   cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
+   dw = (X_i * (a_i - y_i));
+   db = a_i - y_i;
+
+ }
+
+}
 
 void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
 	float a_i = sigmoid_i(w.dot(X_i) + b);
+	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
+	dw = (X_i * (a_i - y_i));
+	db = a_i - y_i;
+}
+
+
+
+void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
+
+  float *a, *b1, *c;
+  float *dev_a, *dev_b, *dev_c(0);
+  float size = N * sizeof(float);
+
+ //allocate space for the variables on the device
+  cudaMalloc(&dev_a, size);
+  cudaMalloc(&dev_b, size);
+  cudaMalloc(&dev_c, sizeof(float));
+
+ //allocate space for the variables on the host
+ a = (float *)malloc(size);
+ b1 = (float *)malloc(size);
+ c = (float *)malloc(sizeof(float));
+
+ dev_a = w.transpose().data();
+ dev_b = X_i.data();
+
+ cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
+ cudaMemcpy(dev_b, b1, size, cudaMemcpyHostToDevice);
+ cudaMemcpy(dev_c, c, sizeof(float), cudaMemcpyHostToDevice);
+
+ dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c);
+
+ cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
+
+ float a_i = sigmoid_i(*c + b);
+
+ free(a);
+ free(b1);
+ free(c);
+ cudaFree(dev_a);
+ cudaFree(dev_b);
+ cudaFree(dev_c);
+
 	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
 	dw = (X_i * (a_i - y_i));
 	db = a_i - y_i;
@@ -87,15 +179,35 @@ void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVec
     mt19937 gen(rd());
     uniform_int_distribution<int> dis(0, m - 1);
     int i = dis(gen);
-		float cost;
-		propagate(w, b, X, y, dw, db, cost);
+		float cost_i;
+		propagate_i(w, b, X.col(i), y(i), dw, db, cost_i);
 		w = w - ((learningRate / sqrt(j + 1)) * dw);
 		b = b - ((learningRate / sqrt(j + 1)) * db);
 		if (i % 100 == 0){
-			costs.push_back(cost);
+			costs.push_back(cost_i);
 		}
-		if(printCost and (j % 10) == 0)
-            cout << "Cost after iteration " << j << ": " << cost << endl;
+		if(printCost and (j % 1000) == 0)
+            cout << "Cost after iteration " << j << ": " << cost_i << endl;
+	}
+}
+
+void optimize_par(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
+			  int numIterations, float learningRate, vector<float> &costs, bool printCost = true){
+	int m = X.cols();
+	for(int j = 0; j < numIterations; j++){
+		random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<int> dis(0, m - 1);
+    int i = dis(gen);
+		float cost_i;
+		propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
+		w = w - ((learningRate / sqrt(j + 1)) * dw);
+		b = b - ((learningRate / sqrt(j + 1)) * db);
+		if (i % 100 == 0){
+			costs.push_back(cost_i);
+		}
+		if(printCost and (j % 1000) == 0)
+            cout << "Cost after iteration " << j << ": " << cost_i << endl;
 	}
 }
 
@@ -115,6 +227,20 @@ RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 	return(yPrediction);
 }
 
+void model_par(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
+           RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
+		   bool printCost = true){
+	initialize(w, b, xTrain.rows());
+	VectorXf dw;
+	float db;
+	optimize_par(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs);
+	yPredictionsTrain = predict(w, b, xTrain);
+	yPredictionsTest = predict(w, b, xTest);
+
+	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
+	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
+}
+
 void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
            RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
 		   bool printCost = true){
@@ -125,13 +251,14 @@ void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTes
 	yPredictionsTrain = predict(w, b, xTrain);
 	yPredictionsTest = predict(w, b, xTest);
 
-	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) << endl;
-	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) << endl;
+	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
+	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
 }
 
 int main(){
+  Timer Tim;
 	VectorXf w, dw;
-	float b, db, cost;
+	float b;
 	initialize(w, b, 4);
 	MatrixXf x(4, 26);
 	x << 1, 0, 3, 4, 1, 2, 2, 3, 4, 2, 3, 5, 1, 2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3,
@@ -147,11 +274,17 @@ int main(){
 	yTest << 1, 1, 1, 0, 0;
 	RowVectorXf yPredictions, yPredictionsTest;
 	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
-	//vector<float> costs;
-	propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost);
-
+	vector<float> costs;
 	//propagate_i(w, b, x.col(3), y(3), dw, db, cost_i);
-	//model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0002);
+  Tim.start();
+	model_par(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001);
+  Tim.add();
+	cout << "With GPU Time is: " << Tim.getsum() << " seconds" << endl;
+
+  Tim.start();
+  model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001);
+  Tim.add();
+  cout << "With CPU Time is: " << Tim.getsum() << " seconds" << endl;
 
 	return(0);
 }
