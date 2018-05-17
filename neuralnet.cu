@@ -75,15 +75,14 @@ void propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, flo
 	db = (1. / m) * ((A - y).sum());
 }
 
-void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
+void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost){
 	float a_i = sigmoid_i(w.dot(X_i) + b);
-	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
+	cost = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
 	dw = (X_i * (a_i - y_i));
 	db = a_i - y_i;
 }
 
-
-void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
+void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost, bool partial=false){
 
   float *a, *b1, *c;
   float *dev_a, *dev_b, *dev_c(0);
@@ -119,33 +118,60 @@ void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw,
  cudaFree(dev_b);
  cudaFree(dev_c);
 
-	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
-	dw = (X_i * (a_i - y_i));
-	db = a_i - y_i;
+  cost = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
+  dw = (X_i * (a_i - y_i));
+  db = a_i - y_i;
+ }
+
+void propagate_par(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost){
+  int m = X.cols();
+  VectorXf dw_a;
+  float db_a;
+  for (int i=0; i<m; i++){
+    float cost_i;
+    propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
+    cost += cost_i;
+    dw_a += dw;
+    db_a += db;
+  }
+  dw = (1 / m) * dw_a;
+  db = (1 / m) * db_a;
+  cost = (1 / m) * cost;
 }
 
 void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
-			  int numIterations, float learningRate, vector<float> &costs, bool printCost=true, bool par=false){
+			  int numIterations, float learningRate, vector<float> &costs, bool printCost=true, bool par=false, bool sgd=false){
 	int m = X.cols();
+  float cost;
 	for(int j = 0; j < numIterations; j++){
-		random_device rd;
-    mt19937 gen(rd());
-    uniform_int_distribution<int> dis(0, m - 1);
-    int i = dis(gen);
-		float cost_i;
-    if (par == true){
-      propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
-    }
+    if (sgd == true){
+  		random_device rd;
+      mt19937 gen(rd());
+      uniform_int_distribution<int> dis(0, m - 1);
+      int i = dis(gen);
+
+        if (par == true){
+          propagate_i_par(w, b, X.col(i), y(i), dw, db, cost);
+        }
+        else{
+          propagate_i(w, b, X.col(i), y(i), dw, db, cost);
+      }}
     else{
-      propagate_i(w, b, X.col(i), y(i), dw, db, cost_i);
-    }
+
+      if (par == true){
+        propagate_par(w, b, X, y, dw, db, cost);
+      }
+      else{
+        propagate(w, b, X, y, dw, db, cost);
+    }}
+
 		w = w - ((learningRate / sqrt(j + 1)) * dw);
 		b = b - ((learningRate / sqrt(j + 1)) * db);
-		if (i % 100 == 0){
-			costs.push_back(cost_i);
+		if (j % 100 == 0){
+			costs.push_back(cost);
 		}
 		if(printCost and (j % 1000) == 0)
-            cout << "Cost after iteration " << j << ": " << cost_i << endl;
+            cout << "Cost after iteration " << j << ": " << cost << endl;
 	}
 }
 
@@ -165,31 +191,38 @@ RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 	return(yPrediction);
 }
 
-
 void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
            RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
-		   bool printCost = true, bool par=false){
+		   bool printCost = true, bool par=true, bool sgd=false){
 	initialize(w, b, xTrain.rows());
 	VectorXf dw;
 	float db;
-  if (par==true){
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, par=true);
+  if (sgd==true){
+    if (par==true){
+      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, par=true, sgd=true);
+    }
+    else{
+      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, sgd=true);
+    }
   }
   else{
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs);
+    if (par==true){
+      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, par=true);
+    }
+    else{
+      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs);
   }
-
 	yPredictionsTrain = predict(w, b, xTrain);
 	yPredictionsTest = predict(w, b, xTest);
 
 	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
 	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
-}
+}}
 
 int main(){
   Timer Tim;
 	VectorXf w, dw;
-	float b;
+	float b, db, cost;
 	initialize(w, b, 4);
 	MatrixXf x(4, 26);
 	x << 1, 0, 3, 4, 1, 2, 2, 3, 4, 2, 3, 5, 1, 2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3,
@@ -206,14 +239,13 @@ int main(){
 	RowVectorXf yPredictions, yPredictionsTest;
 	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
 	vector<float> costs;
-	//propagate_i(w, b, x.col(3), y(3), dw, db, cost_i);
   Tim.start();
-	model_par(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, par=true);
+	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001);
   Tim.add();
 	cout << "With GPU Time is: " << Tim.getsum() << " seconds" << endl;
 
   Tim.start();
-  model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001);
+  model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, true, false, false);
   Tim.add();
   cout << "With CPU Time is: " << Tim.getsum() << " seconds" << endl;
 
