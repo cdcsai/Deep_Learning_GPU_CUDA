@@ -16,24 +16,43 @@ using namespace Eigen;
 using namespace std;
 
 // The Cuda parallelized dot product
-__global__ void dot_par(float *aa, float *bb, float *cc)
-{
-    __shared__ float temp[THREADS_PER_BLOCK];
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
-    temp[threadIdx.x] = aa[index] * bb[index];
 
+__global__ void dot_par(float *aa, float *bb, float *cc, bool shared)
+{
+  if (shared==true){
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    __shared__ float temp[THREADS_PER_BLOCK];
+    temp[threadIdx.x] = aa[index] * bb[index];
     __syncthreads();
 
     if (0 == threadIdx.x)
-    {
-        float sum = 0;
-        for (int i = 0; i < THREADS_PER_BLOCK; i++)
-        {
-            sum += temp[i];
-        }
-        atomicAdd(cc, sum);
+      {
+          float sum = 0;
+          for (int i = 0; i < THREADS_PER_BLOCK; i++)
+          {
+              sum += temp[i];
+          }
+          atomicAdd(cc, sum);
+      }
     }
-}
+  else{
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+      __shared__ float temp[THREADS_PER_BLOCK];
+      temp[threadIdx.x] = aa[index] * bb[index];
+      __syncthreads();
+
+      if (0 == threadIdx.x)
+        {
+            float sum = 0;
+            for (int i = 0; i < THREADS_PER_BLOCK; i++)
+            {
+                sum += temp[i];
+            }
+            atomicAdd(cc, sum);
+        }
+      }
+
+  }
 
 //This defines the sigmoid function
 MatrixXf sigmoid(MatrixXf X){
@@ -82,7 +101,7 @@ void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, flo
 	db = a_i - y_i;
 }
 
-void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost, bool partial=false){
+void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost, bool shared=true){
 
   float *a, *b1, *c;
   float *dev_a, *dev_b, *dev_c(0);
@@ -103,9 +122,15 @@ void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw,
 
  cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
  cudaMemcpy(dev_b, b1, size, cudaMemcpyHostToDevice);
- cudaMemcpy(dev_c, c, sizeof(float), cudaMemcpyHostToDevice);
+ cudaMemset(dev_c, 0.0f, sizeof(float));
+ //cudaMemcpy(dev_c, c, sizeof(float), cudaMemcpyHostToDevice);
 
- dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c);
+if (shared == true){
+  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c, true);
+}
+else{
+  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c, false);
+}
 
  cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -123,13 +148,18 @@ void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw,
   db = a_i - y_i;
  }
 
-void propagate_par(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost){
+void propagate_par(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost, bool shared=true){
   int m = X.cols();
   VectorXf dw_a;
   float db_a;
   for (int i=0; i<m; i++){
     float cost_i;
-    propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
+    if (shared == true){
+        propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
+    }
+    else{
+        propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i, false);
+    }
     cost += cost_i;
     dw_a += dw;
     db_a += db;
@@ -140,7 +170,8 @@ void propagate_par(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw,
 }
 
 void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
-			  int numIterations, float learningRate, vector<float> &costs, bool printCost=true, bool par=false, bool sgd=false){
+			  int numIterations, float learningRate, vector<float> &costs,
+        bool par=false, bool shared=true, bool sgd=false){
 	int m = X.cols();
   float cost;
 	for(int j = 0; j < numIterations; j++){
@@ -151,27 +182,37 @@ void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVec
       int i = dis(gen);
 
         if (par == true){
+          if (shared == true){
           propagate_i_par(w, b, X.col(i), y(i), dw, db, cost);
+          }
+          else{
+          propagate_i_par(w, b, X.col(i), y(i), dw, db, cost, false);
+          }
         }
-        else{
+      else{
           propagate_i(w, b, X.col(i), y(i), dw, db, cost);
       }}
-    else{
 
+    else{
       if (par == true){
-        propagate_par(w, b, X, y, dw, db, cost);
+        if (shared == true){
+          propagate_par(w, b, X, y, dw, db, cost);
+        }
+        else{
+          propagate_par(w, b, X, y, dw, db, cost, false);
+        }
       }
       else{
-        propagate(w, b, X, y, dw, db, cost);
+          propagate(w, b, X, y, dw, db, cost);
     }}
 
-		w = w - ((learningRate / sqrt(j + 1)) * dw);
-		b = b - ((learningRate / sqrt(j + 1)) * db);
+		  w = w - ((learningRate / sqrt(j + 1)) * dw);
+      b = b - ((learningRate / sqrt(j + 1)) * db);
 		if (j % 100 == 0){
 			costs.push_back(cost);
 		}
-		if(printCost and (j % 1000) == 0)
-            cout << "Cost after iteration " << j << ": " << cost << endl;
+		if((j % 1000) == 0){
+            cout << "Cost after iteration " << j << ": " << cost << endl;}
 	}
 }
 
@@ -193,31 +234,28 @@ RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 
 void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
            RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
-		   bool printCost = true, bool par=true, bool sgd=false){
+           bool par, bool shared, bool sgd){
 	initialize(w, b, xTrain.rows());
 	VectorXf dw;
 	float db;
-  if (sgd==true){
-    if (par==true){
-      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, par=true, sgd=true);
-    }
-    else{
-      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, sgd=true);
-    }
-  }
-  else{
-    if (par==true){
-      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, par=true);
-    }
-    else{
-      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs);
-  }
-	yPredictionsTrain = predict(w, b, xTrain);
-	yPredictionsTest = predict(w, b, xTest);
+  if (par==true && shared==true && sgd==true){
+    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, true, true);}
+  if (par==true && shared==true && sgd==false){
+    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, true, false);}
+  if (par==true && shared==false && sgd==true){
+    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, false, true);}
+  if (par==true && shared==false && sgd==false){
+    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, false, false);}
+  if (par==false && shared==false && sgd==true){
+    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, false, false, true);}
+  if (par==false && shared==false && sgd==false){
+      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, false, false, false);}
 
-	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
-	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
-}}
+	  yPredictionsTrain = predict(w, b, xTrain);
+	  yPredictionsTest = predict(w, b, xTest);
+    cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
+    cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
+}
 
 int main(){
   Timer Tim;
@@ -240,14 +278,14 @@ int main(){
 	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
 	vector<float> costs;
   Tim.start();
-	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001);
+	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, true, true, true);
   Tim.add();
-	cout << "With GPU Time is: " << Tim.getsum() << " seconds" << endl;
+	cout << "With GPU register Time SGD is: " << Tim.getsum() << " seconds" << endl;
 
   Tim.start();
-  model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, true, false, false);
+	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, false, false, false);
   Tim.add();
-  cout << "With CPU Time is: " << Tim.getsum() << " seconds" << endl;
+	cout << "With CPU Time with Batch is: " << Tim.getsum() << " seconds" << endl;
 
 	return(0);
 }
