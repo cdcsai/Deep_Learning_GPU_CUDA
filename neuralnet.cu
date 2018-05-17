@@ -75,19 +75,6 @@ void propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, flo
 	db = (1. / m) * ((A - y).sum());
 }
 
-// void propagate_par(VectorXf w, float b, VectorXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost_i){
-//   int m = X.cols();
-//
-//   for (i=0; i<m; i++){
-//     propagate_i_par()
-//   }
-//
-//
-//
-//  }
-//
-// }
-
 void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost_i){
 	float a_i = sigmoid_i(w.dot(X_i) + b);
 	cost_i = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
@@ -162,26 +149,6 @@ void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVec
 	}
 }
 
-// void optimize_par(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
-// 			  int numIterations, float learningRate, vector<float> &costs, bool printCost = true){
-// 	int m = X.cols();
-// 	for(int j = 0; j < numIterations; j++){
-// 		random_device rd;
-//     mt19937 gen(rd());
-//     uniform_int_distribution<int> dis(0, m - 1);
-//     int i = dis(gen);
-// 		float cost_i;
-// 		propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
-// 		w = w - ((learningRate / sqrt(j + 1)) * dw);
-// 		b = b - ((learningRate / sqrt(j + 1)) * db);
-// 		if (i % 100 == 0){
-// 			costs.push_back(cost_i);
-// 		}
-// 		if(printCost and (j % 1000) == 0)
-//             cout << "Cost after iteration " << j << ": " << cost_i << endl;
-// 	}
-// }
-
 RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 	int m = X.cols();
 	RowVectorXf yPrediction(m);
@@ -198,19 +165,6 @@ RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 	return(yPrediction);
 }
 
-// void model_par(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
-//            RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
-// 		   bool printCost = true){
-// 	initialize(w, b, xTrain.rows());
-// 	VectorXf dw;
-// 	float db;
-// 	optimize_par(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs);
-// 	yPredictionsTrain = predict(w, b, xTrain);
-// 	yPredictionsTest = predict(w, b, xTest);
-//
-// 	cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
-// 	cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
-// }
 
 void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
            RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
