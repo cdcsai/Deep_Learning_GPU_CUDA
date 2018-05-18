@@ -8,6 +8,7 @@
 #include "device_atomic_functions.h"
 #include "timer.h"
 #include <stdio.h>
+#include <fstream>
 #include <stdlib.h>
 #define N 512
 #define THREADS_PER_BLOCK 512
@@ -16,10 +17,9 @@ using namespace Eigen;
 using namespace std;
 
 // The Cuda parallelized dot product
-
-__global__ void dot_par(float *aa, float *bb, float *cc, bool shared)
+__global__ void dot_par(float *aa, float *bb, float *cc)
 {
-  if (shared==true){
+
     int index = threadIdx.x + blockIdx.x * blockDim.x;
     __shared__ float temp[THREADS_PER_BLOCK];
     temp[threadIdx.x] = aa[index] * bb[index];
@@ -34,24 +34,24 @@ __global__ void dot_par(float *aa, float *bb, float *cc, bool shared)
           }
           atomicAdd(cc, sum);
       }
-    }
-  else{
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
-      __shared__ float temp[THREADS_PER_BLOCK];
-      temp[threadIdx.x] = aa[index] * bb[index];
-      __syncthreads();
+  }
 
-      if (0 == threadIdx.x)
-        {
-            float sum = 0;
-            for (int i = 0; i < THREADS_PER_BLOCK; i++)
-            {
-                sum += temp[i];
-            }
-            atomicAdd(cc, sum);
-        }
+// To load the data in the right format
+MatrixXf load_csv (const std::string & path) {
+      std::ifstream indata;
+      indata.open(path);
+      std::string line;
+      std::vector<float> values;
+      int rows = 0;
+      while (std::getline(indata, line)) {
+          std::stringstream lineStream(line);
+          std::string cell;
+          while (std::getline(lineStream, cell, ',')) {
+              values.push_back(std::stod(cell));
+          }
+          ++rows;
       }
-
+      return Map<const Matrix<typename MatrixXf::Scalar, MatrixXf::RowsAtCompileTime, MatrixXf::ColsAtCompileTime, RowMajor>>(values.data(), rows, values.size()/rows);
   }
 
 //This defines the sigmoid function
@@ -61,6 +61,7 @@ MatrixXf sigmoid(MatrixXf X){
 	return(result.matrix());
 }
 
+//This defines the sigmoid function for one point
 float sigmoid_i(float X){
 	float result = 1 / (1 + exp(-X));
 	return(result);
@@ -81,30 +82,41 @@ MatrixXf softmax(MatrixXf X){
 }
 
 //This function initializes the coefficient
-void initialize(VectorXf &w, float &b, int dim){
-	w = ArrayXf::Random(dim).matrix();
-	b = 0;
+void initialize(MatrixXf &w1, MatrixXf &w2, VectorXf &b1, float &b2, int dim_x, int dim_h, int dim_y){
+	w1 = MatrixXf::Random(dim_h, dim_x).matrix();
+  b1 = ArrayXf::Zero(dim_h).matrix();
+  w2 = MatrixXf::Random(dim_y, dim_h).matrix();
+  b2 = 0;
+}
+//float y_i, VectorXf &dw, float &db, float &cost)
+void fwd_propagate_i(VectorXf X_i, MatrixXf w1, MatrixXf w2, VectorXf b1, float b2, VectorXf &a1_i, VectorXf &z1_i,  VectorXf &z2_i, float &a2_i){
+   z1_i = (w1 * X_i).matrix() + b1.matrix();
+   a1_i = sigmoid(z1_i);
+   z2_i = (w2 * a1_i).array() + b2;
+   a2_i = sigmoid_i(z2_i(0));
+ }
+
+// Compute the cost for one point
+void compute_cost_i(float y_i, float a2_i, float &cost){
+   float temp = log(a2_i) * y_i + log((1.0 - a2_i)) * (1.0 - y_i);
+   cost = - 1.0 * temp;}
+
+// Backward Propagation for one point
+void bwd_propagation_i(VectorXf X_i, float y_i, float a2_i, MatrixXf w1, MatrixXf w2, VectorXf &a1_i, MatrixXf &dw1, MatrixXf &dw2, VectorXf &db1, float &db2){
+    float dz2_i = a2_i - y_i;
+    dw2 = 1.0 * (dz2_i * a1_i.transpose()).matrix();
+    db2 = 1.0 * dz2_i;
+    VectorXf dz1_i = ((w2.transpose() * dz2_i).array() * (1 - a1_i.array().pow(2)).array()).matrix();
+    dw1 = 1.0 * (dz1_i * X_i.transpose());
+    //Rq sum or not?
+    db1 = 1.0 * dz1_i;
 }
 
-void propagate(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost){
-	int m = X.cols();
-	MatrixXf A = sigmoid((w.transpose() * X).array() + b);
-	cost = (-1. / m) * (((y.array() * A.array().log()) + ((1 - y.array()) * (1 - A.array()).log())).sum());
-	dw = (1. / m) * (X * ((A - y).transpose()));
-	db = (1. / m) * ((A - y).sum());
-}
+// Forward Propagation for one point
+void fwd_propagate_i_par(VectorXf X_i, MatrixXf w1, MatrixXf w2, VectorXf b1, float b2, VectorXf &a1_i, VectorXf &z1_i,  VectorXf &z2_i, float &a2_i){
 
-void propagate_i(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost){
-	float a_i = sigmoid_i(w.dot(X_i) + b);
-	cost = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
-	dw = (X_i * (a_i - y_i));
-	db = a_i - y_i;
-}
-
-void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw, float &db, float &cost, bool shared=true){
-
-  float *a, *b1, *c;
-  float *dev_a, *dev_b, *dev_c(0);
+  float *a, *b, *c;
+  float *dev_a, *dev_b, *dev_c;
   float size = N * sizeof(float);
 
  //allocate space for the variables on the device
@@ -112,117 +124,54 @@ void propagate_i_par(VectorXf w, float b, VectorXf X_i, float y_i, VectorXf &dw,
   cudaMalloc(&dev_b, size);
   cudaMalloc(&dev_c, sizeof(float));
 
- //allocate space for the variables on the host
- a = (float *)malloc(size);
- b1 = (float *)malloc(size);
- c = (float *)malloc(sizeof(float));
+  //allocate space for the variables on the host
+  a = (float *)malloc(size);
+  b = (float *)malloc(size);
+  c = (float *)malloc(sizeof(float));
 
- dev_a = w.transpose().data();
- dev_b = X_i.data();
 
- cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
- cudaMemcpy(dev_b, b1, size, cudaMemcpyHostToDevice);
- cudaMemset(dev_c, 0.0f, sizeof(float));
- //cudaMemcpy(dev_c, c, sizeof(float), cudaMemcpyHostToDevice);
+  dev_a = w1.data();
+  dev_b = X_i.data();
 
-if (shared == true){
-  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c, true);
-}
-else{
-  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c, false);
-}
+  cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
+  cudaMemcpy(dev_b, b, size, cudaMemcpyHostToDevice);
+  cudaMemset(dev_c, 0.0f, sizeof(float));
 
- cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
+  dot_par<<< N, THREADS_PER_BLOCK >>>(dev_a, dev_b, dev_c);
 
- float a_i = sigmoid_i(*c + b);
+  cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
 
- free(a);
- free(b1);
- free(c);
- cudaFree(dev_a);
- cudaFree(dev_b);
- cudaFree(dev_c);
+  a1_i = sigmoid(*c + b1.array());
 
-  cost = -1 * ((y_i * log(a_i)) + ((1 - y_i) * log(1 - a_i)));
-  dw = (X_i * (a_i - y_i));
-  db = a_i - y_i;
+  free(a);
+  free(b);
+  free(c);
+  cudaFree(dev_a);
+  cudaFree(dev_b);
+  cudaFree(dev_c);
+
+  z2_i = (w2 * a1_i).array() + b2;
+  a2_i = sigmoid_i(z2_i(0));
  }
 
-void propagate_par(VectorXf w, float b, MatrixXf X, RowVectorXf y, VectorXf &dw, float &db, float &cost, bool shared=true){
-  int m = X.cols();
-  VectorXf dw_a;
-  float db_a;
-  for (int i=0; i<m; i++){
-    float cost_i;
-    if (shared == true){
-        propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i);
-    }
-    else{
-        propagate_i_par(w, b, X.col(i), y(i), dw, db, cost_i, false);
-    }
-    cost += cost_i;
-    dw_a += dw;
-    db_a += db;
-  }
-  dw = (1 / m) * dw_a;
-  db = (1 / m) * db_a;
-  cost = (1 / m) * cost;
+// Update parameters for optimization
+void update_parameters(MatrixXf &w1, MatrixXf &w2, VectorXf &b1, float &b2, MatrixXf dw1, MatrixXf dw2,
+  VectorXf &db1, float &db2, float learningRate, int j){
+    w1 = w1 - ((learningRate / sqrt(j + 1)) * dw1);
+    b1 = b1 - ((learningRate / sqrt(j + 1)) * db1);
+    w2 = w2 - ((learningRate / sqrt(j + 1)) * dw2);
+    b2 = b2 - ((learningRate / sqrt(j + 1)) * db2);
 }
 
-void optimize(VectorXf &w, float &b, VectorXf &dw, float &db, MatrixXf X, RowVectorXf y,
-			  int numIterations, float learningRate, vector<float> &costs,
-        bool par=false, bool shared=true, bool sgd=false){
-	int m = X.cols();
-  float cost;
-	for(int j = 0; j < numIterations; j++){
-    if (sgd == true){
-  		random_device rd;
-      mt19937 gen(rd());
-      uniform_int_distribution<int> dis(0, m - 1);
-      int i = dis(gen);
-
-        if (par == true){
-          if (shared == true){
-          propagate_i_par(w, b, X.col(i), y(i), dw, db, cost);
-          }
-          else{
-          propagate_i_par(w, b, X.col(i), y(i), dw, db, cost, false);
-          }
-        }
-      else{
-          propagate_i(w, b, X.col(i), y(i), dw, db, cost);
-      }}
-
-    else{
-      if (par == true){
-        if (shared == true){
-          propagate_par(w, b, X, y, dw, db, cost);
-        }
-        else{
-          propagate_par(w, b, X, y, dw, db, cost, false);
-        }
-      }
-      else{
-          propagate(w, b, X, y, dw, db, cost);
-    }}
-
-		  w = w - ((learningRate / sqrt(j + 1)) * dw);
-      b = b - ((learningRate / sqrt(j + 1)) * db);
-		if (j % 100 == 0){
-			costs.push_back(cost);
-		}
-		if((j % 1000) == 0){
-            cout << "Cost after iteration " << j << ": " << cost << endl;}
-	}
-}
-
-RowVectorXf predict(VectorXf w, float b, MatrixXf X){
-	int m = X.cols();
+// Prediction Function
+RowVectorXf predict(MatrixXf x, MatrixXf w1, MatrixXf w2, VectorXf b1, float b2){
+	int m = x.cols();
+  VectorXf a1_i, z1_i, z2_i;
+  float a2_i;
 	RowVectorXf yPrediction(m);
-
-	MatrixXf A = sigmoid((w.transpose() * X).array() + b);
-	for(int i = 0; i < A.cols(); i++){
-		if(A(0, i) <= 0.5){
+	for(int i = 0; i < m; i++){
+    fwd_propagate_i(x.col(i), w1, w2, b1, b2, a1_i, z1_i, z2_i, a2_i);
+		if(a2_i <= 0.5){
 			yPrediction(0, i) = 0;
 		}
 		else{
@@ -232,60 +181,71 @@ RowVectorXf predict(VectorXf w, float b, MatrixXf X){
 	return(yPrediction);
 }
 
-void model(MatrixXf xTrain, RowVectorXf yTrain, MatrixXf xTest, RowVectorXf yTest, RowVectorXf &yPredictionsTrain,
-           RowVectorXf &yPredictionsTest, VectorXf &w, float &b, std::vector<float> &costs, const int &numIterations, const float &learningRate,
-           bool par, bool shared, bool sgd){
-	initialize(w, b, xTrain.rows());
-	VectorXf dw;
-	float db;
-  if (par==true && shared==true && sgd==true){
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, true, true);}
-  if (par==true && shared==true && sgd==false){
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, true, false);}
-  if (par==true && shared==false && sgd==true){
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, false, true);}
-  if (par==true && shared==false && sgd==false){
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, true, false, false);}
-  if (par==false && shared==false && sgd==true){
-    optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, false, false, true);}
-  if (par==false && shared==false && sgd==false){
-      optimize(w, b, dw, db, xTrain, yTrain, numIterations, learningRate, costs, false, false, false);}
+// Main model
+void model(MatrixXf xTrain, MatrixXf yTrain, MatrixXf xTest, MatrixXf yTest,
+  RowVectorXf &yPredictionsTrain, RowVectorXf &yPredictionsTest,
+  VectorXf db1, float db2, MatrixXf dw1, MatrixXf dw2, int numIterations,
+  float learningRate,  int dim_x, int dim_h, int dim_y, bool par=true){
+  int m = xTrain.cols();
+  float cost;
+  MatrixXf w1, w2;
+  VectorXf b1, a1_i, z1_i, z2_i;
+  float b2,  a2_i;
+  initialize(w1, w2, b1, b2, dim_x, dim_h, dim_y);
+	for(int j = 0; j < numIterations; j++){
+  		random_device rd;
+      mt19937 gen(rd());
+      uniform_int_distribution<int> dis(0, m - 1);
+      int i = dis(gen);
+      if (par==true){
+        fwd_propagate_i_par(xTrain.col(i), w1, w2, b1, b2, a1_i, z1_i, z2_i, a2_i);
+        compute_cost_i(yTrain(i), a2_i, cost);
+        bwd_propagation_i(xTrain.col(i), yTrain(i), a2_i, w1, w2, a1_i, dw1, dw2, db1, db2);
+        update_parameters(w1, w2, b1, b2, dw1, dw2, db1, db2, learningRate, j);
+      }
+      else{
+        fwd_propagate_i(xTrain.col(i), w1, w2, b1, b2, a1_i, z1_i, z2_i, a2_i);
+        compute_cost_i(yTrain(i), a2_i, cost);
+        bwd_propagation_i(xTrain.col(i), yTrain(i), a2_i, w1, w2, a1_i, dw1, dw2, db1, db2);
+        update_parameters(w1, w2, b1, b2, dw1, dw2, db1, db2, learningRate, j);
+      }
+		if((j % 100) == 0){
+            cout << "Cost after epoch " << j << ": " << cost << endl;}}
 
-	  yPredictionsTrain = predict(w, b, xTrain);
-	  yPredictionsTest = predict(w, b, xTest);
-    cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
-    cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
+  yPredictionsTrain = predict(xTrain, w1, w2, b1, b2);
+  yPredictionsTest = predict(xTest, w1, w2, b1, b2);
+  cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
+  cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
 }
 
 int main(){
-  Timer Tim;
-	VectorXf w, dw;
-	float b, db, cost;
-	initialize(w, b, 4);
-	MatrixXf x(4, 26);
-	x << 1, 0, 3, 4, 1, 2, 2, 3, 4, 2, 3, 5, 1, 2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3,
-       2, 5, 3, 5, 2, 1, 4, 3, 2, 0, 0, 2, 4, 0, 5, 3, 2, 4, 2, 1, 1, 2, 2, 1, 2, 5,
-	   2, 3, 0, 5, 3, 2, 4, 2, 1, 1, 2, 2, 1, 2, 5, 3, 5, 2, 1, 4, 3, 2, 0, 0, 2, 4,
-	   2, 3, 2, 5, 0, 1, 4, 5, 0, 1, 2, 1, 3, 2, 3, 0, 5, 3, 2, 4, 2, 1, 1, 2, 2, 1;
-	MatrixXf xTest(4, 5);
-	xTest << 1, 3, 4, 5, 3,
-	         0, 4, 5, 4, 4,
-			 2, 3, 2, 1, 1,
-			 3, 4, 0, 0, 5;
-	RowVectorXf y(26), yTest(5);
-	yTest << 1, 1, 1, 0, 0;
-	RowVectorXf yPredictions, yPredictionsTest;
-	y << 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0;
-	vector<float> costs;
-  Tim.start();
-	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, true, true, true);
-  Tim.add();
-	cout << "With GPU register Time SGD is: " << Tim.getsum() << " seconds" << endl;
+  Timer Tim1, Tim2;
+	MatrixXf w1, w2, dw1, dw2;
+	VectorXf b1, db1, z1_i, a1_i(4), z2_i;
+  float db2;
 
-  Tim.start();
-	model(x, y, xTest, yTest, yPredictions, yPredictionsTest, w, b, costs, 10000, 0.0001, false, false, false);
-  Tim.add();
-	cout << "With CPU Time with Batch is: " << Tim.getsum() << " seconds" << endl;
+  MatrixXf xTrain = load_csv("trainingImages.csv") / 255.0;
+	RowVectorXf yTrain = load_csv("trainingLabels.csv");
+	MatrixXf xTest = load_csv("testImages.csv") / 255.0;
+	RowVectorXf yTest = load_csv("testLabels.csv");
+	std::cout << "x train: " << xTrain.rows() << " " << xTrain.cols() << std::endl;
+	std::cout << "y train: " << yTrain.rows() << " " << yTrain.cols() << std::endl;
+	std::cout << "x test: " << xTest.rows() << " " << xTest.cols() << std::endl;
+	std::cout << "y test: " << yTest.rows() << " " << yTest.cols() << std::endl;
+	RowVectorXf yPredictionsTrain, yPredictionsTest;
+
+  cout << "Warming the GPU..." << endl;
+  model(xTrain, yTrain, xTest, yTest, yPredictionsTrain, yPredictionsTest, db1, db2, dw1, dw2, 500, 0.1, xTrain.rows(), 10, 1, false);
+
+  Tim1.start();
+  model(xTrain, yTrain, xTest, yTest, yPredictionsTrain, yPredictionsTest, db1, db2, dw1, dw2, 1000, 0.1, xTrain.rows(), 30, 1, false);
+  Tim1.add();
+  cout << "With SGD CPU Time is: " << Tim1.getsum() << " seconds" << endl;
+
+  Tim2.start();
+  model(xTrain, yTrain, xTest, yTest, yPredictionsTrain, yPredictionsTest, db1, db2, dw1, dw2, 1000, 0.1, xTrain.rows(), 30, 1);
+  Tim2.add();
+	cout << "With SGD GPU Time is: " << Tim2.getsum() << " seconds" << endl;
 
 	return(0);
 }
