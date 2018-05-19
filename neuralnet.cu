@@ -61,6 +61,12 @@ MatrixXf sigmoid(MatrixXf X){
 	return(result.matrix());
 }
 
+//This defines the tanh function
+MatrixXf tanh_(MatrixXf X){
+	ArrayXXf result = X.array().tanh();
+	return(result.matrix());
+}
+
 //This defines the sigmoid function for one point
 float sigmoid_i(float X){
 	float result = 1 / (1 + exp(-X));
@@ -91,7 +97,8 @@ void initialize(MatrixXf &w1, MatrixXf &w2, VectorXf &b1, float &b2, int dim_x, 
 //float y_i, VectorXf &dw, float &db, float &cost)
 void fwd_propagate_i(VectorXf X_i, MatrixXf w1, MatrixXf w2, VectorXf b1, float b2, VectorXf &a1_i, VectorXf &z1_i,  VectorXf &z2_i, float &a2_i){
    z1_i = (w1 * X_i).matrix() + b1.matrix();
-   a1_i = sigmoid(z1_i);
+   a1_i = tanh_(z1_i);
+   //a1_i = sigmoid(z1_i);
    z2_i = (w2 * a1_i).array() + b2;
    a2_i = sigmoid_i(z2_i(0));
  }
@@ -141,7 +148,8 @@ void fwd_propagate_i_par(VectorXf X_i, MatrixXf w1, MatrixXf w2, VectorXf b1, fl
 
   cudaMemcpy(c, dev_c, sizeof(float), cudaMemcpyDeviceToHost);
 
-  a1_i = sigmoid(*c + b1.array());
+  //a1_i = sigmoid(*c + b1.array());
+  a1_i = tanh_(*c + b1.array());
 
   free(a);
   free(b);
@@ -212,10 +220,10 @@ void model(MatrixXf xTrain, MatrixXf yTrain, MatrixXf xTest, MatrixXf yTest,
 		if((j % 100) == 0){
             cout << "Cost after epoch " << j << ": " << cost << endl;}}
 
-  yPredictionsTrain = predict(xTrain, w1, w2, b1, b2);
-  yPredictionsTest = predict(xTest, w1, w2, b1, b2);
-  cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
-  cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
+  // yPredictionsTrain = predict(xTrain, w1, w2, b1, b2);
+  // yPredictionsTest = predict(xTest, w1, w2, b1, b2);
+  // cout << "train accuracy: " << 100 - ((yPredictionsTrain - yTrain).array().abs().sum() / float(yTrain.size())) * 100 << endl;
+  // cout << "test accuracy: " << 100 - ((yPredictionsTest - yTest).array().abs().sum() / float(yTest.size())) * 100 << endl;
 }
 
 int main(){
